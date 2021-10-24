@@ -1,0 +1,22 @@
+{
+  "name": "@budgetdraw/sveltekit-cloudflare-adapter",
+  "version": "0.1.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test-dependencies": "cd test-app && npm install",
+    "test": "if [ -d test-app/node_modules ]; then ava; else echo \"missing test dependencies, please run:\\n\\n    npm run test-dependencies\\n\"; exit 1; fi"
+  },
+  "devDependencies": {
+    "ava": "^3.15.0",
+    "cloudflare-worker-local": "^1.13.0",
+    "got": "^11.8.2",
+    "mime": "^2.5.2"
+  },
+  "author": "Thomas Yandell <thomasyandell@gmail.com>",
+  "license": "MIT",
+  "dependencies": {
+    "esbuild": "^0.12.2"
+  }
+}
