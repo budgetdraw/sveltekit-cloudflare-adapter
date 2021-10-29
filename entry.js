@@ -41,6 +41,7 @@ function safeMethod (request) {
 }
 
 function internalServerErrorResponse (err) {
+    console.error('err', err)
     return new Response(err, {
         headers: { 'Content-Type': 'text/plain' },
         status: 500,
@@ -74,9 +75,20 @@ async function renderResponse(request, url) {
             query: url.searchParams,
             rawBody: request.body ? await read(request) : null
         })
-        if (response.body) {
+        if (response) {
+            const headers = new Headers
+            for (const [key, value] of Object.entries(response.headers)) {
+                if (key.toLowerCase() == 'set-cookie' && Array.isArray(value)) {
+                    for (let i = 0; i < value.length; i++) {
+                        headers.append(key, value[i])
+                    }
+                } else {
+                    headers.append(key, value)
+                }
+            }
+
             return new Response(response.body, {
-                headers: response.headers,
+                headers,
                 status: response.status
             })
         }

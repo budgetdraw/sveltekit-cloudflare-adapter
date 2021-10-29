@@ -70,6 +70,20 @@ test.serial('basic request', async t => {
     t.regex(response.body, /Welcome to SvelteKit/)
 })
 
+test.serial('empty body', async t => {
+    const response = await t.context.get('/empty')
+    t.is(response.statusCode, 200)
+    t.is(response.body, '')
+})
+
+test.serial('set cookies', async t => {
+    const response = await t.context.get('/set-cookies')
+    // not possible to test this currently since cloudflare-worker-local has the
+    // Headers implementation from node-fetch, which doesn't include these differences:
+    // https://developers.cloudflare.com/workers/runtime-apis/headers#differences
+    t.is(response.headers['set-cookie'][0], 'a=b, c=d')
+})
+
 test.serial('not found', async t => {
     let response = await t.context.get('/does-not-exist')
     t.is(response.statusCode, 404)
