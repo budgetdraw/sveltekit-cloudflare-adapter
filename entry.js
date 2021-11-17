@@ -28,7 +28,7 @@ async function handle(event) {
         }
     }
 
-    const response = await renderResponse(request, url)
+    const response = await renderResponse(request, url, event)
     if (response) {
         return response
     }
@@ -65,7 +65,7 @@ function notFoundResponse () {
 	});
 }
 
-async function renderResponse(request, url) {
+async function renderResponse(request, url, cfFetchEvent) {
     try {
         const response = await render({
             headers: Object.fromEntries(request.headers),
@@ -73,7 +73,8 @@ async function renderResponse(request, url) {
             method: request.method,
             path: url.pathname,
             query: url.searchParams,
-            rawBody: request.body ? await read(request) : null
+            rawBody: request.body ? await read(request) : null,
+            cfFetchEvent,
         })
         if (response) {
             const headers = new Headers

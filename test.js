@@ -1,11 +1,14 @@
 import test from 'ava'
 import { promisify } from 'util'
 import { exec as execWithCallback } from 'child_process'
-import { createTestApp } from 'cloudflare-worker-local'
+import { Miniflare } from "miniflare";
 import path from 'path';
 import { fileURLToPath } from 'url';
-import got from 'got'
 import { promises as fs } from 'fs'
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+const urlPrefix = 'http://localhost:8787'
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -44,86 +47,64 @@ const putKVAssets = async (path, store) => {
 test.before(async t => {
     const { stdout } = await exec('cd test-app && npm run build')
     const workerContent = await fs.readFile(path.join(__dirname, 'test-app', 'target', 'worker.js'));
-    const server = createTestApp(workerContent, fallback, { kvStores: [ "__STATIC_CONTENT" ]})
-    await putKVAssets(path.join(__dirname, 'test-app', 'target', 'assets'), server.stores.__STATIC_CONTENT)
-    t.context.server = server
-    const prefixUrl = await listenEphemeralPrefix(server)
-    t.context.get = async url => {
-        try {
-            return await got(url.replace(/^\//, ''), { prefixUrl })
-        } catch (err) {
-            if (err.response) {
-                return err.response
-            }
-            throw err
-        }
-    }
+    t.context.mf = new Miniflare({
+        script: workerContent,
+        kvNamespaces: [ '__STATIC_CONTENT' ],
+    })
+    const kvNamespace = await t.context.mf.getKVNamespace("__STATIC_CONTENT");
+    await putKVAssets(path.join(__dirname, 'test-app', 'target', 'assets'), kvNamespace)
 })
 
-test.after(async t => {
-    t.context.server.close()
+test('basic request', async t => {
+    const response = await t.context.mf.dispatchFetch(`${urlPrefix}/`)
+    t.is(response.status, 200)
+    t.regex(await response.text(), /Welcome to SvelteKit/)
 })
 
-test.serial('basic request', async t => {
-    const response = await t.context.get('/')
-    t.is(response.statusCode, 200)
-    t.regex(response.body, /Welcome to SvelteKit/)
+test('empty body', async t => {
+    const response = await t.context.mf.dispatchFetch(`${urlPrefix}/empty`)
+    t.is(response.status, 200)
+    t.is(await response.text(), '')
 })
 
-test.serial('empty body', async t => {
-    const response = await t.context.get('/empty')
-    t.is(response.statusCode, 200)
-    t.is(response.body, '')
+test('set cookies', async t => {
+    const response = await t.context.mf.dispatchFetch(`${urlPrefix}/set-cookies`)
+    // can replace with getAll if https://github.com/mrbbot/node-fetch/pull/2 is applied
+    t.deepEqual(response.headers.raw()["set-cookie"], ['a=b', 'c=d'])
 })
 
-test.serial('set cookies', async t => {
-    const response = await t.context.get('/set-cookies')
-    // not possible to test this currently since cloudflare-worker-local has the
-    // Headers implementation from node-fetch, which doesn't include these differences:
-    // https://developers.cloudflare.com/workers/runtime-apis/headers#differences
-    t.is(response.headers['set-cookie'][0], 'a=b, c=d')
+test('not found', async t => {
+    let response = await t.context.mf.dispatchFetch(`${urlPrefix}/does-not-exist`)
+    t.is(response.status, 404)
 })
 
-test.serial('not found', async t => {
-    let response = await t.context.get('/does-not-exist')
-    t.is(response.statusCode, 404)
-})
-
-test.serial('linked assets', async t => {
-    const response = await t.context.get('/')
-    const hrefs = linkHrefs(response.body)
+test('linked assets', async t => {
+    const response = await t.context.mf.dispatchFetch(`${urlPrefix}/`)
+    const hrefs = linkHrefs(await response.text())
     t.assert(hrefs.length > 3, 'links in page')
     for (const href of hrefs) {
-        const assetResponse = await t.context.get(href)
-        t.is(assetResponse.statusCode, 200, 'status of ' + href)
-        t.assert(assetResponse.body.length > 10, 'got content back: ' + assetResponse.body)
-        t.not(response.body, assetResponse.body)
+        const assetResponse = await t.context.mf.dispatchFetch(urlPrefix + href)
+        t.is(assetResponse.status, 200, 'status of ' + href)
+        const body = await assetResponse.text()
+        t.assert(body.length > 10, 'got content back: ' + body)
+        t.not(response.body, body)
         if (href.endsWith('.js')) {
-            t.is(assetResponse.headers['content-type'], 'application/javascript; charset=utf-8')
+            t.is(assetResponse.headers.get('content-type'), 'application/javascript; charset=utf-8')
         } else if (href.endsWith('.css')) {
-            t.is(assetResponse.headers['content-type'], 'text/css; charset=utf-8')
+            t.is(assetResponse.headers.get('content-type'), 'text/css; charset=utf-8')
         }
     }
 })
 
-function listenEphemeralPrefix (server) {
-    return new Promise((resolve, reject) =>
-        server.listen(0, err => {
-            if (err) {
-            reject(err)
-            } else {
-                const address = server.address()
-                resolve(`http://[${address.address}]:${address.port}`)
-            }
-            err ? reject(err) : resolve(server.address())
-        })
-    )
-}
-
-const fallback = () => {
-    console.error('fallback called unexpectedly')
-    process.exit(1)
-}
+test('pass waitUntil', async t => {
+    const response = await t.context.mf.dispatchFetch(`${urlPrefix}/wait-until`)
+    t.is(response.status, 200)
+    t.is(await response.json(), false)
+    await sleep(1000)
+    const response2 = await t.context.mf.dispatchFetch(`${urlPrefix}/wait-until`)
+    t.is(response2.status, 200)
+    t.is(await response2.json(), true)
+})
 
 function linkHrefs (source) {
     return [...source.matchAll(/<link rel="\w+" href="([^"]+)">/g)]
